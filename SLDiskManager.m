@@ -286,46 +286,53 @@ CF_RETURNS_RETAINED DADissenterRef diskMountApproval(DADiskRef disk, void *conte
 	[[NSNotificationCenter defaultCenter] postNotificationName:SLDiskManagerUnmountedVolumesDidChangeNotification object:nil];
 }
 
+-(void)diskUnlock {
+    AuthorizationRef authRef;
+    AuthorizationItem authItem;
+    AuthorizationRights authRights;
+    AuthorizationFlags authFlags;
+    
+    OSStatus authStatus;
+    
+    // Create empty authorization
+    printf("awaiting: AuthorizationCreate\n");
+    authStatus = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagDefaults, &authRef);
+    printf("AuthorizationCreate // authStatus == %d\n", authStatus);
+    
+    // Create a new authorization proces
+    authItem.name = "system.disk.unlock";
+    
+    // com.apple.securityAgentPlugin.DiskUnlock com.apple.diskunlock
+    // kODAttributeTypeUniqueID kODAttributeTypeGUID
+    // com.apple.corestorage.lv.family com.apple.corestorage.lvf.encryption.context
+    // com.apple.corestorage.lvf.encryption.status com.apple.corestorage.lv.nameAKSPassphraseUUID
+    // Failed to authorize right 'system.disk.unlock' by client '/Users/andres/Library/Developer/Xcode/DerivedData/Semulov-cqkovpssvzmigobgdythixhtnqio/Build/Products/Release/Semulov.app' [2087] for authorization created by '/Users/andres/Library/Developer/Xcode/DerivedData/Semulov-cqkovpssvzmigobgdythixhtnqio/Build/Products/Release/Semulov.app' [2087] (1,0) (-60006)
+    // Error 2087: https://developer.apple.com/documentation/coreservices/core_services_enumerations/1559990-anonymous
+    
+    // NSString *UUID = @"F2677503-E4A0-3CCC-AD24-F980670CEDB5";
+    
+    authItem.valueLength = 0; //strlen(UUID.UTF8String);
+    authItem.value = NULL; //(void*)UUID.UTF8String;
+    authItem.flags = 0;
+    
+    authRights.count = 1;
+    authRights.items = &authItem;
+    
+    authFlags = kAuthorizationFlagDefaults | kAuthorizationFlagInteractionAllowed; //| kAuthorizationFlagPreAuthorize | kAuthorizationFlagExtendRights; // kAuthorizationFlagExtendRights
+    
+    // Get new credentials
+    printf("awaiting: AuthorizationCopyRights\n");
+    authStatus = AuthorizationCopyRights(authRef, &authRights, kAuthorizationEmptyEnvironment, authFlags, NULL);
+    printf("AuthorizationCopyRights // authStatus == %d\n", authStatus);
+    
+    printf("DONE");
+}
+
 - (void)mount:(SLDisk *)disk
 {
     // DiskArbitration does not seem to support encrypted disk. In order to be able to mount an encrypted disk we have to use the diskutil command
     if (disk.encrypted) {
-        NSString* service = disk.volumeUUID;
-        
-        UInt32 pwLength = 0;
-        void* pwData = NULL;
-        SecKeychainItemRef itemRef = NULL;
-        
-        OSStatus status = SecKeychainFindGenericPassword(
-                                                         NULL,         // Search default keychains
-                                                         (UInt32)service.length,
-                                                         [service UTF8String],
-                                                         0,
-                                                         NULL,
-                                                         &pwLength,
-                                                         &pwData,
-                                                         &itemRef      // Get a reference this time
-                                                         );
-        
-        if (status == errSecSuccess) {
-            NSData* data = [NSData dataWithBytes:pwData length:pwLength];
-            NSString* password = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            NSLog(@"Volume encryption password fetched successfully from the keychain");
-            
-            // Execute diskutil, passing the volumeKind and the encryption password
-            NSTask *task = [[NSTask alloc] init];
-            [task setLaunchPath:@"/usr/sbin/diskutil"];
-            [task setArguments:@[ disk.volumeKind, @"unlockVolume", disk.diskID, @"-passphrase", password ]];
-            [task launch];
-        } else {
-            NSAlert *alert = [[NSAlert alloc] init];
-            [alert setMessageText: [NSString stringWithFormat: NSLocalizedString(@"Error: %@ \n\nRemember that in order to be able to mount an encrypted volume, previously you have to: \na) Mount it using Disk Utility\nb) Save the password in the keychain", nil), (__bridge_transfer NSString *)SecCopyErrorMessageString(status, NULL)]];
-            [alert runModal];
-            
-            NSLog(@"Failed to fetch the volume encryption password from the keychain: %@", (__bridge_transfer NSString *)SecCopyErrorMessageString(status, NULL));
-        }
-        
-        if (pwData) SecKeychainItemFreeContent(NULL, pwData);  // Free memory
+        [self diskUnlock];
     } else {
         DADiskRef diskref = DADiskCreateFromBSDName(kCFAllocatorDefault, _session, [disk.diskID UTF8String]);
         if (diskref) {
